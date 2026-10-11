@@ -10,10 +10,10 @@ export interface Env {
   AI: Ai;
   /** Signs session tokens. Any long random string; changing it signs everyone out. */
   AUTH_SECRET: string;
-  /** Sends sign-in codes (Cloudflare Email Service). */
-  EMAIL: SendEmail;
-  /** Sender address for sign-in codes, on a domain with Email Sending enabled. */
-  EMAIL_FROM: string;
+  /** Cloudflare Access: the team domain, e.g. `https://<team>.cloudflareaccess.com`. Empty = no UI sign-in. */
+  ACCESS_TEAM_DOMAIN: string;
+  /** Cloudflare Access: this application's AUD tag. Empty = no UI sign-in. */
+  ACCESS_AUD: string;
   /** Optional admin key: `Authorization: Bearer <MEMORY_API_KEY>` reaches any user's /api. Empty = off. */
   MEMORY_API_KEY: string;
 }

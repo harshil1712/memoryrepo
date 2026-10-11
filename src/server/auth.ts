@@ -1,18 +1,22 @@
 import { getAgentByName } from "agents";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { Env } from "./env.ts";
 
 /**
- * Simple auth: sign in with an email address and a 6-digit code sent to it (Cloudflare Email
- * Service). No passwords. The user id is derived from the email, so one inbox is one memory repo.
- * Codes, their limits, and the account's email live in that user's MemoryAgent.
+ * Single-user auth: humans sign in through Cloudflare Access. This deployment sits behind an
+ * Access application (enable it on the Worker's URL, or on a hostname in your zone); the edge
+ * authenticates, and the Worker verifies the `Cf-Access-Jwt-Assertion` JWT against the team's
+ * public keys, then mints a session from the verified email. The user id is derived from the
+ * email, so one identity is one memory repo — no email infrastructure, no open sign-up.
+ *
+ * Machine agents skip all of this: they carry `Authorization: Bearer <MEMORY_API_KEY>`, which
+ * reaches every user's /api (see api.ts).
  *
  * A session is a signed token `<user>.<expires>.<hmac>`, sent as an HttpOnly cookie (so the agent
  * WebSockets carry it too) or as `Authorization: Bearer <token>` for the HTTP API.
  *
- *   POST /auth/start   {email}       → emails a code
- *   POST /auth/verify  {email, code} → {user, email, token}  and sets the cookie
- *   POST /auth/logout                → clears the cookie
- *   GET  /auth/me                    → {user, email, token} or 401
+ *   GET  /auth/me     → {user, email, token}; mints a session from the Access JWT if none yet
+ *   POST /auth/logout → clears the cookie
  */
 export const USER = /^[a-z0-9_-]{1,48}$/;
 const EMAIL = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
@@ -27,48 +31,51 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
   const url = new URL(request.url);
   const route = `${request.method.toUpperCase()} ${url.pathname}`;
 
-  if (route === "POST /auth/start" || route === "POST /auth/verify") {
-    const body = (await request.json().catch(() => null)) as { email?: string; code?: string } | null;
-    const email = body?.email?.trim().toLowerCase() ?? "";
-    if (email.length > 254 || !EMAIL.test(email)) return json({ error: "enter a valid email address" }, 400);
-    const user = await userIdFor(email);
-    const memory = await getAgentByName(env.MemoryAgent, user);
-
-    if (route === "POST /auth/start") {
-      const issued = await memory.issueLoginCode();
-      if ("retryAfter" in issued) return json({ error: `too many codes; try again in ${wait(issued.retryAfter)}` }, 429, { "retry-after": String(issued.retryAfter) });
-      try {
-        await env.EMAIL.send({
-          to: email,
-          from: { email: env.EMAIL_FROM, name: "markdown memory" },
-          subject: `${issued.code} is your markdown memory code`,
-          text: `Your sign-in code is ${issued.code}\n\nIt expires in 10 minutes. If you didn't ask for it, ignore this email.`,
-          html: `<p>Your sign-in code is</p><p style="font:600 28px ui-monospace,Menlo,monospace;letter-spacing:4px">${issued.code}</p><p style="color:#74747a">It expires in 10 minutes. If you didn't ask for it, ignore this email.</p>`,
-        });
-      } catch (error) {
-        console.error("auth: send failed", error);
-        return json({ error: "couldn't send the email; try again" }, 502);
-      }
-      return json({ sent: true });
-    }
-
-    const outcome = await memory.verifyLoginCode((body?.code ?? "").replace(/\s/g, ""), email);
-    if (outcome !== "ok") {
-      const error = { wrong: "wrong code", expired: "that code expired or was used up; send a new one" }[outcome];
-      return json({ error }, 401);
-    }
-    const token = await sign(user, env.AUTH_SECRET);
-    return json({ user, email, token }, 200, { "set-cookie": cookie(url, token, SESSION_SECONDS) });
-  }
-  if (route === "POST /auth/logout") return json({ ok: true }, 200, { "set-cookie": cookie(url, "", 0) });
   if (route === "GET /auth/me") {
     const token = readToken(request);
     const user = token ? await verify(token, env.AUTH_SECRET) : null;
-    if (!user) return json({ error: "not signed in" }, 401);
-    const email = await (await getAgentByName(env.MemoryAgent, user)).accountEmail();
-    return json({ user, email, token });
+    if (user) {
+      const email = await (await getAgentByName(env.MemoryAgent, user)).accountEmail();
+      return json({ user, email, token });
+    }
+
+    // No session yet: mint one from Cloudflare Access.
+    if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD)
+      return json({ error: "Cloudflare Access is not configured: set ACCESS_TEAM_DOMAIN and ACCESS_AUD" }, 503);
+    const email = await accessEmail(request, env);
+    if (!email) return json({ error: "not signed in (Cloudflare Access)" }, 401);
+    const newUser = await userIdFor(email);
+    await (await getAgentByName(env.MemoryAgent, newUser)).setAccountEmail(email);
+    const fresh = await sign(newUser, env.AUTH_SECRET);
+    return json({ user: newUser, email, token: fresh }, 200, { "set-cookie": cookie(url, fresh, SESSION_SECONDS) });
   }
+  if (route === "POST /auth/logout") return json({ ok: true }, 200, { "set-cookie": cookie(url, "", 0) });
   return json({ error: "not found" }, 404);
+}
+
+/** The verified email behind a Cloudflare Access JWT, or null (missing/invalid/misconfigured). */
+async function accessEmail(request: Request, env: Env): Promise<string | null> {
+  const team = env.ACCESS_TEAM_DOMAIN.replace(/\/+$/, "");
+  const assertion = request.headers.get("cf-access-jwt-assertion");
+  if (!team || !env.ACCESS_AUD || !assertion) return null;
+  try {
+    const { payload } = await jwtVerify(assertion, remoteJWKS(team), { issuer: team, audience: env.ACCESS_AUD });
+    const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
+    return email && EMAIL.test(email) ? email : null;
+  } catch {
+    return null;
+  }
+}
+
+/** jose's remote JWKS over the team's public certs, memoized per team (jose refreshes keys itself). */
+const JWKS = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+function remoteJWKS(team: string) {
+  let jwks = JWKS.get(team);
+  if (!jwks) {
+    jwks = createRemoteJWKSet(new URL("/cdn-cgi/access/certs", `${team}/`));
+    JWKS.set(team, jwks);
+  }
+  return jwks;
 }
 
 /** The signed-in user for a request (cookie or bearer token), or null. */
@@ -83,8 +90,6 @@ async function userIdFor(email: string): Promise<string> {
   const local = email.split("@")[0]!.replace(/[^a-z0-9_-]/g, "").slice(0, 24) || "user";
   return `${local}-${digest.slice(0, 12)}`;
 }
-
-const wait = (seconds: number) => (seconds < 90 ? `${seconds}s` : `${Math.ceil(seconds / 60)} min`);
 
 // ---- session tokens ------------------------------------------------------------------------
 

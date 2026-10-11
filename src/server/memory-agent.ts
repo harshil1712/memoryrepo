@@ -1,20 +1,14 @@
 import { Agent, callable, getAgentByName } from "agents";
 import { BANK, DEFAULT_BANK, MAX_BANKS, parseMemoryName } from "../shared/banks.ts";
 import { buildGraph, type Graph } from "../shared/links.ts";
-import { equal } from "./auth.ts";
-import type { Env } from "./env.ts";
 import { dream, type CommitOutcome, type FileChange } from "./memory.ts";
+import type { Env } from "./env.ts";
 import { DEFAULT_CHAT_MODEL, DEFAULT_DREAM_MODEL, MODELS, metered, resolveModel, type CallUsage, type ModelInfo } from "./models.ts";
 import { buildInbox, parseSourceRef, sourceExcerpt, type TranscriptMessage } from "./transcripts.ts";
 import { Vault, type Files } from "./vault.ts";
 
 /** Dreaming runs on a Durable Object alarm this often, and only when there are new messages. */
 const DREAM_EVERY_SECONDS = 4 * 60 * 60;
-/** Sign-in codes: how long one lasts, guesses per code, and how often new ones can be sent. */
-const CODE_TTL_MS = 10 * 60_000;
-const CODE_ATTEMPTS = 5;
-const CODE_RESEND_MS = 60_000;
-const CODES_PER_HOUR = 5;
 /** Model spend allowed per user per calendar month (UTC). Not shown to users.
  * Costs are metered at Cloudflare's list prices, so this caps real spend. */
 const MONTHLY_SPEND_CAP_USD = 20;
@@ -125,32 +119,11 @@ export class MemoryAgent extends Agent<Env, MemoryState> {
     this.sql`INSERT INTO bank_spend (at, bank, cost) VALUES (${at}, ${bank}, ${cost})`;
   }
 
-  // ---- sign-in (not @callable: only the Worker's /auth routes reach these, over DO RPC) ----------
+  // ---- identity (not @callable: only the Worker's /auth routes reach these, over DO RPC) ---------
 
-  /** A new 6-digit sign-in code (replacing any earlier one), or how long to wait before asking again. */
-  issueLoginCode(): { code: string } | { retryAfter: number } {
-    const now = Date.now();
-    const sent = (JSON.parse(this.meta("login_sends") ?? "[]") as number[]).filter((t) => now - t < 3_600_000);
-    const last = sent.at(-1);
-    if (last && now - last < CODE_RESEND_MS) return { retryAfter: Math.ceil((last + CODE_RESEND_MS - now) / 1000) };
-    if (sent.length >= CODES_PER_HOUR) return { retryAfter: Math.ceil((sent[0]! + 3_600_000 - now) / 1000) };
-    const code = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(6, "0");
-    this.setMeta("login_sends", JSON.stringify([...sent, now]));
-    this.setMeta("login_code", JSON.stringify({ code, expires: now + CODE_TTL_MS, attempts: 0 }));
-    return { code };
-  }
-
-  /** Check a sign-in code. A code works once, for 10 minutes, and dies after 5 wrong guesses. */
-  verifyLoginCode(code: string, email: string): "ok" | "wrong" | "expired" {
-    const pending = JSON.parse(this.meta("login_code") ?? "null") as { code: string; expires: number; attempts: number } | null;
-    if (!pending || pending.expires < Date.now() || pending.attempts >= CODE_ATTEMPTS) return "expired";
-    if (!equal(code, pending.code)) {
-      this.setMeta("login_code", JSON.stringify({ ...pending, attempts: pending.attempts + 1 }));
-      return "wrong";
-    }
-    this.sql`DELETE FROM meta WHERE key = 'login_code'`;
+  /** The verified email behind the account. Set when Cloudflare Access mints the first session. */
+  setAccountEmail(email: string): void {
     this.setMeta("email", email);
-    return "ok";
   }
 
   accountEmail(): string | null {

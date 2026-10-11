@@ -23,8 +23,9 @@ import type { Env } from "./env.ts";
  *
  * Add `?bank=<name>` to work in another memory bank (default: main).
  *
- * Requests need `Authorization: Bearer <token>` with the user's session token (from POST /auth/verify,
- * or the UI's API card), or the session cookie. If MEMORY_API_KEY is set, it reaches every user.
+ * Requests need `Authorization: Bearer <token>` with the user's session token (from `GET /auth/me`
+ * behind Cloudflare Access, or the UI's API card), or the session cookie. If MEMORY_API_KEY is
+ * set, it reaches every user.
  */
 const THREAD = /^[a-z0-9]{1,16}$/;
 
@@ -41,7 +42,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   const [, user, rest = ""] = m;
   if (!USER.test(user!)) return fail(400, "user id must match [a-z0-9_-]{1,48}");
   const admin = !!env.MEMORY_API_KEY && request.headers.get("authorization") === `Bearer ${env.MEMORY_API_KEY}`;
-  if (!admin && (await sessionUser(request, env)) !== user) return fail(401, "sign in as this user: Authorization: Bearer <token> (POST /auth/start, then /auth/verify)");
+  if (!admin && (await sessionUser(request, env)) !== user) return fail(401, "sign in as this user: Authorization: Bearer <token> (sign in via Cloudflare Access, GET /auth/me), or use the MEMORY_API_KEY admin key");
   const bank = url.searchParams.get("bank") ?? DEFAULT_BANK;
   if (!BANK.test(bank)) return fail(400, "bank must match [a-z0-9_-]{1,32}");
   if (bank !== DEFAULT_BANK && !(await (await getAgentByName(env.MemoryAgent, user!)).hasBank(bank))) return fail(404, `no such bank: ${bank}`);
@@ -120,7 +121,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
 const INDEX = {
   name: "markdown-memory",
   banks: "add ?bank=<name> to any route (default: main); banks are created in the UI",
-  auth: "Authorization: Bearer <token>; get one with POST /auth/start {email}, then POST /auth/verify {email, code}",
+  auth: "Authorization: Bearer <token>; get one by signing in via Cloudflare Access (GET /auth/me), or copy it from the UI's API card",
   routes: [
     "POST /api/users/:user/chat  {message, thread?, tz?}",
     "GET  /api/users/:user/notes",

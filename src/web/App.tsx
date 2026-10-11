@@ -21,14 +21,14 @@ type Session = { user: string; email: string | null; token: string };
 export function App() {
   // undefined: still checking the session cookie.
   const [session, setSession] = useState<Session | null | undefined>(undefined);
-  useEffect(() => {
-    void fetch("/auth/me")
+  const load = () =>
+    fetch("/auth/me")
       .then((r) => (r.ok ? (r.json() as Promise<Session>) : null))
       .catch(() => null)
       .then(setSession);
-  }, []);
+  useEffect(() => void load(), []);
   if (session === undefined) return null;
-  if (!session) return <SignIn onSignIn={setSession} />;
+  if (!session) return <AccessSignIn onRetry={() => (setSession(undefined), void load())} />;
   return <Account session={session} onSignOut={() => void fetch("/auth/logout", { method: "POST" }).finally(() => setSession(null))} />;
 }
 
@@ -61,107 +61,21 @@ function Account({ session, onSignOut }: { session: Session; onSignOut: () => vo
   );
 }
 
-async function post<T>(path: string, body: object): Promise<T> {
-  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
-  if (!res) throw new Error("network error");
-  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(data.error ?? `failed (${res.status})`);
-  return data;
-}
-
-function SignIn({ onSignIn }: { onSignIn: (session: Session) => void }) {
-  const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [sent, setSent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const run = async (fn: () => Promise<void>) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await fn();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const sendCode = () =>
-    run(async () => {
-      await post("/auth/start", { email });
-      setSent(true);
-      setCode("");
-    });
-
+function AccessSignIn({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="signin">
-      <form
-        className="signin-card"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (busy) return;
-          if (!sent) void sendCode();
-          else void run(async () => onSignIn(await post<Session>("/auth/verify", { email, code })));
-        }}
-      >
+      <div className="signin-card">
         <div className="brand">
           <span className="brand-mark" />
           markdown memory
         </div>
         <p className="muted">An agent whose long-term memory is a git repo of markdown. It writes as it learns; a dreaming agent tidies up.</p>
-        {!sent ? (
-          <>
-            <label className="label" htmlFor="email">
-              email
-            </label>
-            <input
-              id="email"
-              type="email"
-              autoFocus
-              autoComplete="email"
-              className="input mono"
-              placeholder="ada@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </>
-        ) : (
-          <>
-            <label className="label" htmlFor="code">
-              code sent to {email}
-            </label>
-            <input
-              id="code"
-              autoFocus
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              className="input mono"
-              placeholder="123456"
-              maxLength={6}
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-            />
-          </>
-        )}
-        {error && <p className="hint mono signin-error">{error}</p>}
-        <button className="btn btn-primary" disabled={busy || (sent ? code.length !== 6 : !email.includes("@"))}>
-          {busy ? "…" : sent ? "Sign in →" : "Email me a code →"}
+        <p className="hint mono">sign-in is handled by Cloudflare Access</p>
+        <p className="hint mono">open this app through its Access-protected URL, then come back</p>
+        <button className="btn btn-primary" onClick={onRetry}>
+          Try again →
         </button>
-        {sent ? (
-          <p className="hint mono">
-            <button type="button" className="link-btn" disabled={busy} onClick={() => void sendCode()}>
-              resend
-            </button>{" "}
-            ·{" "}
-            <button type="button" className="link-btn" onClick={() => (setSent(false), setError(null))}>
-              different email
-            </button>
-          </p>
-        ) : (
-          <p className="hint mono">no password · we email you a 6-digit code</p>
-        )}
-      </form>
+      </div>
     </div>
   );
 }

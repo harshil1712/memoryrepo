@@ -62,7 +62,7 @@ You need [Bun](https://bun.sh), Node 22+, and a Cloudflare account with Artifact
 
 ```sh
 bun install
-cp .env.example .env      # add AUTH_SECRET (openssl rand -hex 32), EMAIL_FROM; optionally MEMORY_API_KEY for the admin API
+cp .env.example .env      # add AUTH_SECRET (openssl rand -hex 32); optionally MEMORY_API_KEY for the admin API
 bun run dev               # http://localhost:1337 (first run asks you to log in to Cloudflare)
 ```
 
@@ -72,15 +72,12 @@ Deploy with `bun run deploy`. Infrastructure is defined in `alchemy.run.ts` with
 
 ## HTTP API
 
-The same agents are available over HTTP under `/api`, scoped per user id. `GET /api` lists the routes. Every request needs that user's session token: copy it from the UI's API card, or sign in over HTTP.
+The same agents are available over HTTP under `/api`, scoped per user id. `GET /api` lists the routes. Machine agents authenticate with the admin key (`MEMORY_API_KEY`, set in `.env`, reaches every user); humans copy their session token from the UI's API card.
 
 ```sh
-curl -X POST localhost:1337/auth/start -H 'content-type: application/json' -d '{"email": "ada@example.com"}'
-export MEMORY_TOKEN=$(curl -s -X POST localhost:1337/auth/verify -H 'content-type: application/json' \
-  -d '{"email": "ada@example.com", "code": "123456"}' | jq -r .token)   # the code from the email
-alias curl='curl -H "authorization: Bearer $MEMORY_TOKEN"'
+alias curl='curl -H "authorization: Bearer $MEMORY_API_KEY"'
 # add ?bank=<name> to any route to use another memory bank (default: main)
-# user ids look like ada-3f2a1c9b0e7d (the email's local part + a hash); /auth/verify returns yours
+# user ids look like ada-3f2a1c9b0e7d (the email's local part + a hash); the UI's account menu shows yours
 
 # chat: runs a full turn (recall + memory writes) and returns the reply and what it remembered
 curl -X POST localhost:1337/api/users/ada/chat -H 'content-type: application/json' \
@@ -110,7 +107,15 @@ Set `MEMORY_API_KEY` for an admin key: `Authorization: Bearer <MEMORY_API_KEY>` 
 
 ## Auth
 
-Email, no passwords. Sign-in emails a 6-digit code through [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) from `EMAIL_FROM` (its domain needs Email Sending enabled: `wrangler email sending enable <domain>`). The user id is derived from the email, so each inbox gets its own memory repo. A code lasts 10 minutes, works once, and dies after 5 wrong guesses; an address gets at most one code a minute and 5 an hour. Under `alchemy dev` mail isn't sent: it lands as `.eml` files in `.alchemy/local/email` (pipe the binding through `Alchemy.remote()` in `alchemy.run.ts` to send for real). One account can keep several memory banks (switch or create them from the top bar). `main` is the account's original memory and keeps its agent name (`<user>`); another bank is a separate agent and repo named `<user>.<bank>`. Sign-in, the bank list and the monthly spend cap live on the main agent, so the cap covers every bank. A session is an HMAC-signed token (signed with `AUTH_SECRET`, valid 30 days), set as an HttpOnly cookie for the UI and usable as a bearer token for the API. The Worker checks it before any request reaches `/agents/memory-agent/<user>` or `/agents/chat-agent/<user>.*`, so you can only open your own agents.
+Cloudflare Access, single user. Enable it on the Worker's URL (Workers & Pages → the Worker → Settings → Domains & Routes → Enable Cloudflare Access) or add a self-hosted Access application for a hostname in your zone. The edge authenticates; the Worker verifies the `Cf-Access-Jwt-Assertion` JWT against your team's public keys and mints a session from the verified email — the user id derives from the email, so one identity is one memory repo, with no email infrastructure and no open sign-up.
+
+Set `ACCESS_TEAM_DOMAIN` (e.g. `https://<team>.cloudflareaccess.com`) and `ACCESS_AUD` (the application's AUD tag, under Access → Applications → your app). Until both are set, the UI has no sign-in; the admin API below still works.
+
+Machine agents don't sign in at all: set `MEMORY_API_KEY` and send `Authorization: Bearer <MEMORY_API_KEY>`, which reaches every user's `/api`.
+
+One account can keep several memory banks (switch or create them from the top bar). `main` is the account's original memory and keeps its agent name (`<user>`); another bank is a separate agent and repo named `<user>.<bank>`. The bank list and the monthly spend cap live on the main agent, so the cap covers every bank. A session is an HMAC-signed token (signed with `AUTH_SECRET`, valid 30 days), set as an HttpOnly cookie for the UI and usable as a bearer token for the API. The Worker checks it before any request reaches `/agents/memory-agent/<user>` or `/agents/chat-agent/<user>.*`, so you can only open your own agents.
+
+If the Worker also serves a workers.dev URL, put that behind Access too (or disable the route) — an unprotected URL would bypass Access.
 
 ## Layout
 
@@ -125,7 +130,7 @@ src/server/
   transcripts.ts          chat → timestamped transcripts, inbox for dreams, source excerpts
   models.ts               open-weight model list, Workers AI, per-call cost metering
   api.ts                  HTTP API (/api/users/:user/…) over the same agents
-  auth.ts                 email-code sign-in, signed session cookie / bearer token
+  auth.ts                 Cloudflare Access JWT → session cookie / bearer token
 src/web/                  React UI (chat, notes editor, memory explorer, history, dream log, ⌘K search)
 ```
 
@@ -133,7 +138,7 @@ To change how the agent behaves, edit `AGENT_PROMPT` and the conventions in `src
 
 ## Caveats
 
-- **Simple auth.** Anyone with an email address can sign up. Each user's model spend is capped at $1 per calendar month (UTC; `MONTHLY_SPEND_CAP_USD` in `memory-agent.ts`): past it, chat refuses with "usage limit reached" and dreams are skipped. Code sends are limited per address, not per IP, so someone could still make you send codes to many addresses.
+- **Single user.** Sign-in is Cloudflare Access, not email — anyone outside your Access policy is out. Each user's model spend is capped per calendar month (UTC; `MONTHLY_SPEND_CAP_USD` in `memory-agent.ts`): past it, chat refuses with "usage limit reached" and dreams are skipped.
 - **Cost of writing as you go.** A message with something worth remembering costs a few extra steps (search, then edit). Dreams cost more as memory grows: the dreamer re-reads what's there before writing.
 - **Grep, not embeddings.** Recall depends on the agent searching with the right words. Aliases in entries help.
 

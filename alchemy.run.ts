@@ -26,11 +26,11 @@ export const App = Cloudflare.Website.Vite("App", {
     AI: Cloudflare.Workers.AI,
     // Signs login sessions. Any long random string (e.g. `openssl rand -hex 32`).
     AUTH_SECRET: Config.Redacted("AUTH_SECRET"),
-    // Sign-in codes go out through Cloudflare Email Service. Under `alchemy dev` they land as .eml files
-    // in .alchemy/local/email instead; add `.pipe(Alchemy.remote())` to send real mail from dev.
-    EMAIL: Cloudflare.Email.SendEmail("Email"),
-    // Sender for sign-in codes, on a domain with Email Sending enabled (`wrangler email sending enable`).
-    EMAIL_FROM: Config.String("EMAIL_FROM"),
+    // Cloudflare Access (human sign-in): the team domain and this app's AUD tag, e.g.
+    //   https://<team>.cloudflareaccess.com  ·  the AUD tag under Access → Applications → your app.
+    // Until both are set the UI has no sign-in; agents still work via MEMORY_API_KEY.
+    ACCESS_TEAM_DOMAIN: Config.String("ACCESS_TEAM_DOMAIN").pipe(Config.withDefault("")),
+    ACCESS_AUD: Config.String("ACCESS_AUD").pipe(Config.withDefault("")),
     // Optional admin key: `Authorization: Bearer <MEMORY_API_KEY>` reaches any user's /api. Unset = off.
     MEMORY_API_KEY: Config.Redacted("MEMORY_API_KEY").pipe(Config.withDefault(Redacted.make(""))),
   },

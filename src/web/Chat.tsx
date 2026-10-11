@@ -130,7 +130,7 @@ function TurnStats({ state, busy }: { state: ChatState; busy: boolean }) {
         <span title="model steps · tool calls (summed tool time)">
           {s.steps} steps · {s.toolCalls} tools ({secs(s.toolMs)})
         </span>
-        <span className="turnstats-cost" title="cost reported by OpenRouter">
+        <span className="turnstats-cost" title="cost metered at list price">
           {usd(state.cost.turn)} turn · {usd(state.cost.thread)} thread
         </span>
       </div>

@@ -3,7 +3,7 @@ import type { MemoryState } from "../server/memory-agent.ts";
 import type { ModelInfo } from "../server/models.ts";
 import type { Memory } from "./App.tsx";
 
-/** Pick the open-weight models (via OpenRouter) that chat and dream. Shows running totals too. */
+/** Pick the open-weight models (via Workers AI) that chat and dream. Shows running totals too. */
 export function ModelMenu({ memory, state }: { memory: Memory; state: MemoryState }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
@@ -57,7 +57,7 @@ export function ModelMenu({ memory, state }: { memory: Memory; state: MemoryStat
           <div className="menu">
             {select("chat model", state.prefs.chatModel, (id) => void memory.stub.setPrefs({ chatModel: id }))}
             {select("dreaming model", state.prefs.dreamModel, (id) => void memory.stub.setPrefs({ dreamModel: id }))}
-            <p className="hint mono">Open-weight models via OpenRouter. Costs are what OpenRouter reports per call.</p>
+            <p className="hint mono">Open-weight models via Workers AI. Costs are metered at Cloudflare's list prices.</p>
             {costs && (
               <div className="mono costs">
                 spent ${costs.total.toFixed(3)} · chat ${costs.chat.toFixed(3)} · dreaming ${costs.dream.toFixed(3)} · {costs.calls} calls

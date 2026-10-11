@@ -1,5 +1,9 @@
 # markdown memory
 
+> **Fork note:** this variant runs all models on **Workers AI** via the `env.AI` binding — no
+> OpenRouter key, no third-party API — so the entire deployment stays inside your Cloudflare
+> account. Everything else matches upstream.
+
 An AI agent whose long-term memory is **a git repo of markdown**: an LLM wiki it reads, writes, and tidies up itself.
 
 - **`MEMORY.md`** is the entry point. It's loaded into every conversation, kept short, and links out to topic files (`people/priya.md`, `projects/…`, `preferences/…`).
@@ -42,26 +46,23 @@ MemoryAgent ── alarm every 4h / "Dream now" ──► dream() ──git─�
 
 ## Models
 
-Open-weight models only, through [OpenRouter](https://openrouter.ai). Pick the chat model and the dreaming model separately in the ⚙ menu:
+Open-weight models only, through [Workers AI](https://developers.cloudflare.com/workers-ai/) (the `env.AI` binding — no API key). Pick the chat model and the dreaming model separately in the ⚙ menu:
 - GLM 5.3 / 5.3 Flash
-- DeepSeek V4 Pro / V4.1 Flash
-- Kimi K3
-- Qwen3.8
-- MiniMax M3
-- MiMo V2.6 Pro
+- DeepSeek V4 Pro / V4 Flash
+- Kimi K2.6
+- Qwen3.8 27B
 - gpt-oss-120b
-- Mistral Small 4
-- Llama 4 Maverick
+- Nemotron 3 120B
 
-The list lives in `src/server/models.ts`. The defaults are GLM 5.3 for chat and DeepSeek V4 Pro for dreaming. Costs shown in the UI are the exact amounts OpenRouter reports for each call.
+The list lives in `src/server/models.ts`. The defaults are GLM 5.3 for chat and DeepSeek V4 Pro for dreaming. The binding reports no per-call cost, so costs shown in the UI are metered at Cloudflare's list prices.
 
 ## Run it
 
-You need [Bun](https://bun.sh), Node 22+, a Cloudflare account with Artifacts enabled, and an OpenRouter key.
+You need [Bun](https://bun.sh), Node 22+, and a Cloudflare account with Artifacts enabled. Models run on Workers AI through the `env.AI` binding — no API key needed.
 
 ```sh
 bun install
-cp .env.example .env      # add OPENROUTER_API_KEY, AUTH_SECRET (openssl rand -hex 32), EMAIL_FROM
+cp .env.example .env      # add AUTH_SECRET (openssl rand -hex 32), EMAIL_FROM; optionally MEMORY_API_KEY for the admin API
 bun run dev               # http://localhost:1337 (first run asks you to log in to Cloudflare)
 ```
 
@@ -122,7 +123,7 @@ src/server/
   vault.ts                Artifacts reads + isomorphic-git commit/push (cached working copy)
   shell.ts                just-bash over the repo (read-only for chat, writable for dreams)
   transcripts.ts          chat → timestamped transcripts, inbox for dreams, source excerpts
-  models.ts               open-weight model list, OpenRouter, per-call cost metering
+  models.ts               open-weight model list, Workers AI, per-call cost metering
   api.ts                  HTTP API (/api/users/:user/…) over the same agents
   auth.ts                 email-code sign-in, signed session cookie / bearer token
 src/web/                  React UI (chat, notes editor, memory explorer, history, dream log, ⌘K search)

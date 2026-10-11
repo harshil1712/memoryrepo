@@ -6,7 +6,8 @@ export interface Env {
   MemoryAgent: DurableObjectNamespace<MemoryAgent>;
   ChatAgent: DurableObjectNamespace<ChatAgent>;
   MEMORIES: Artifacts;
-  OPENROUTER_API_KEY: string;
+  /** Workers AI — chat and dream models run through this binding (no API key). */
+  AI: Ai;
   /** Signs session tokens. Any long random string; changing it signs everyone out. */
   AUTH_SECRET: string;
   /** Sends sign-in codes (Cloudflare Email Service). */

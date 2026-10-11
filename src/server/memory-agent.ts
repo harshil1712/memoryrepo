@@ -15,8 +15,9 @@ const CODE_TTL_MS = 10 * 60_000;
 const CODE_ATTEMPTS = 5;
 const CODE_RESEND_MS = 60_000;
 const CODES_PER_HOUR = 5;
-/** Model spend allowed per user per calendar month (UTC). Not shown to users. */
-const MONTHLY_SPEND_CAP_USD = 1;
+/** Model spend allowed per user per calendar month (UTC). Not shown to users.
+ * Costs are metered at Cloudflare's list prices, so this caps real spend. */
+const MONTHLY_SPEND_CAP_USD = 20;
 
 export type LogEntry = { at: number; kind: "info" | "bash" | "write" | "commit" | "error"; text: string; detail?: string };
 export type LastDream = { at: number; status: "committed" | "unchanged" | "idle" | "incomplete" | "failed"; message: string; reason: string; cost: number };
@@ -378,7 +379,7 @@ export class MemoryAgent extends Agent<Env, MemoryState> {
       stage = "read repo";
       const vault = await this.vault();
       const base = await this.snapshot(true);
-      const model = metered(resolveModel(this.state.prefs.dreamModel, this.env.OPENROUTER_API_KEY), this.state.prefs.dreamModel, (u) => {
+      const model = metered(resolveModel(this.state.prefs.dreamModel, this.env.AI), this.state.prefs.dreamModel, (u) => {
         void this.recordUsage("dream", `dream:${payload.reason}`, u);
         this.setState({ ...this.state, dreamCost: this.state.dreamCost + u.cost });
       });

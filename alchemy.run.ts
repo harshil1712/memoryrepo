@@ -6,12 +6,12 @@ import * as Redacted from "effect/Redacted";
 import type { ChatAgent, MemoryAgent } from "./src/server/index.ts";
 
 // Every user's memory is one git repo in this Artifacts namespace. Repos are created at runtime.
-export const Memories = Cloudflare.Artifacts.Namespace("Memories", { namespace: "markdown-memory-demo" });
+export const Memories = Cloudflare.Artifacts.Namespace("Memories", { namespace: "shared-memory" });
 
 export const App = Cloudflare.Website.Vite("App", {
   main: "./src/server/index.ts",
-  // The zone must already be in this Cloudflare account; DNS and the certificate are managed for us.
-  domain: { name: "memoryrepo.dev", redirects: ["www.memoryrepo.dev"] },
+  // Trial: served at the workers.dev URL. To put it on a zone in this account, restore:
+  //   domain: { name: "memory.example.com", redirects: ["www.memory.example.com"] },
   compatibility: { date: "2026-09-01" },
   assets: {
     notFoundHandling: "single-page-application",
@@ -22,7 +22,8 @@ export const App = Cloudflare.Website.Vite("App", {
     MemoryAgent: Cloudflare.DurableObject<MemoryAgent>("MemoryAgent"),
     ChatAgent: Cloudflare.DurableObject<ChatAgent>("ChatAgent"),
     MEMORIES: Memories,
-    OPENROUTER_API_KEY: Config.Redacted("OPENROUTER_API_KEY"),
+    // Workers AI binding: account-level, nothing to provision, no API key.
+    AI: Cloudflare.Workers.AI,
     // Signs login sessions. Any long random string (e.g. `openssl rand -hex 32`).
     AUTH_SECRET: Config.Redacted("AUTH_SECRET"),
     // Sign-in codes go out through Cloudflare Email Service. Under `alchemy dev` they land as .eml files
@@ -36,7 +37,7 @@ export const App = Cloudflare.Website.Vite("App", {
 });
 
 export default Alchemy.Stack(
-  "markdown-memory-demo",
+  "shared-memory",
   { providers: Cloudflare.providers(), state: Alchemy.localState() },
   Effect.gen(function* () {
     const app = yield* App;

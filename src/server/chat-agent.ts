@@ -70,7 +70,7 @@ export class ChatAgent extends AIChatAgent<Env, ChatState> {
     let turnCost = 0;
     this.setState({ cost: { turn: 0, thread: threadBefore }, stats: { ...stats }, error: null });
 
-    const model = metered(resolveModel(ctx.chatModel, this.env.OPENROUTER_API_KEY), ctx.chatModel, (u) => {
+    const model = metered(resolveModel(ctx.chatModel, this.env.AI), ctx.chatModel, (u) => {
       turnCost += u.cost;
       void memory.recordUsage("chat", thread, u);
       this.setState({ ...this.state, cost: { turn: turnCost, thread: threadBefore + turnCost } });
